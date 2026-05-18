@@ -6,36 +6,26 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
-
 # Env (CRITICAL: never commit API keys)
 .env
 .env.local
 .env.*.local
 !.env.example
-
 # Database
 *.db
 *.db-journal
 backend/prisma/dev.db
 backend/prisma/migrations/dev/
-
 # Logs
 *.log
 npm-debug.log*
 pnpm-debug.log*
-
 # IDE
 .vscode/
 .idea/
 .DS_Store
-
 # Uploads (local image cache, if any)
 backend/uploads/
-
-# Docker 构建产物（绝不入库，太大）
-*.tar
-*.tar.gz
-
 # Docker 构建产物（绝不入库，太大）
 *.tar
 *.tar.gz
