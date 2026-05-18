@@ -1,0 +1,39 @@
+# 单容器部署。运行：docker compose up -d
+#
+# 启动前需要在同目录创建 .env：
+#   QIANWEN_API_KEY=sk-xxxxx
+#   JWT_SECRET=$(openssl rand -hex 32)
+
+services:
+  app:
+    image: comment-aggregator:latest    # 本地 docker build 或 docker load 后得到
+    container_name: comment-aggregator
+    restart: unless-stopped
+    ports:
+      # 宿主端口由 .env 中 HOST_PORT 控制：本地默认 3001，服务器设 80
+      - "${HOST_PORT:-3001}:3001"
+    volumes:
+      - ./data:/app/backend/data        # SQLite 数据持久化到宿主机 ./data
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      # SQLite 文件路径。注意：必须用绝对路径！
+      # Prisma 解析相对路径的基准是 schema.prisma 所在目录（prisma/），不是 WORKDIR。
+      # 若写 file:./data/prod.db，会落到 /app/backend/prisma/data/prod.db（容器内层），volume 挂的 /app/backend/data 就被绕过了。
+      DATABASE_URL: file:/app/backend/data/prod.db
+      # AI 视觉识别（OpenAI 兼容协议，当前用 Kimi/Moonshot）
+      AI_API_KEY: ${AI_API_KEY}
+      AI_ENDPOINT: ${AI_ENDPOINT:-https://api.moonshot.cn/v1/chat/completions}
+      AI_MODEL: ${AI_MODEL:-moonshot-v1-32k-vision-preview}
+      # K2 系列需要 temperature=1；vision-preview 系列建议 0.1
+      AI_TEMPERATURE: ${AI_TEMPERATURE:-0.1}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-4096}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-30000}
+      # JWT
+      JWT_SECRET: ${JWT_SECRET}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

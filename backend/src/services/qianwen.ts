@@ -67,7 +67,11 @@ export interface AiCallFail {
 }
 export type AiCallResult = AiCallOk | AiCallFail;
 
-const TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
+function getTimeoutMs(): number {
+  const v = Number(process.env.AI_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_TIMEOUT_MS;
+}
 
 function cleanResponse(raw: string): { ok: true; data: ParsedResult } | { ok: false; error: string } {
   let s = raw.trim();
@@ -91,14 +95,20 @@ export async function callQianwenVision(input: {
   mimeType: string;
   buffer: Buffer;
 }): Promise<AiCallResult> {
-  const apiKey = process.env.QIANWEN_API_KEY;
+  // 优先读 AI_*，向下兼容旧名 QIANWEN_*（无 .env 改动也能跑）
+  const apiKey = process.env.AI_API_KEY ?? process.env.QIANWEN_API_KEY;
   const endpoint =
+    process.env.AI_ENDPOINT ??
     process.env.QIANWEN_ENDPOINT ??
-    'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
-  const model = process.env.QIANWEN_MODEL ?? 'qwen-vl-max-latest';
+    'https://api.moonshot.cn/v1/chat/completions';
+  const model =
+    process.env.AI_MODEL ?? process.env.QIANWEN_MODEL ?? 'moonshot-v1-32k-vision-preview';
+  // 部分模型（如 Kimi K2 系列）只接受 temperature=1，普通视觉模型用低温更稳定
+  const temperature = Number(process.env.AI_TEMPERATURE ?? '0.1');
+  const maxTokens = Number(process.env.AI_MAX_TOKENS ?? '4096');
 
   const base64 = input.buffer.toString('base64');
-  // 注意：阿里云要求 data:image/{type};base64,{...} 前缀
+  // OpenAI 兼容协议要求 data:image/{type};base64,{...} 前缀（Moonshot / DashScope / OpenAI 都一样）
   const dataUrl = `data:${input.mimeType};base64,${base64}`;
 
   const debug: AiCallDebug = {
@@ -119,8 +129,8 @@ export async function callQianwenVision(input: {
           { type: 'image_url', image_url_length: dataUrl.length },
           { type: 'text', text_length: VISION_PROMPT.length },
         ],
-        max_tokens: 4096,
-        temperature: 0.1,
+        max_tokens: maxTokens,
+        temperature,
       },
     },
     http: { status: null, durationMs: 0 },
@@ -133,7 +143,7 @@ export async function callQianwenVision(input: {
     return {
       success: false,
       errorCode: 'AI_NOT_CONFIGURED',
-      message: '后端缺少 QIANWEN_API_KEY 环境变量',
+      message: '后端缺少 AI_API_KEY 环境变量',
       debug,
     };
   }
@@ -149,12 +159,13 @@ export async function callQianwenVision(input: {
         ],
       },
     ],
-    max_tokens: 4096,
-    temperature: 0.1,
+    max_tokens: maxTokens,
+    temperature,
   };
 
+  const timeoutMs = getTimeoutMs();
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   const t0 = Date.now();
 
   let resp: Response;
@@ -173,7 +184,12 @@ export async function callQianwenVision(input: {
     debug.http.durationMs = Date.now() - t0;
     const err = e as Error;
     if (err.name === 'AbortError') {
-      return { success: false, errorCode: 'AI_TIMEOUT', message: '阿里云请求超时（30s）', debug };
+      return {
+        success: false,
+        errorCode: 'AI_TIMEOUT',
+        message: `AI 请求超时（${Math.round(timeoutMs / 1000)}s）`,
+        debug,
+      };
     }
     return {
       success: false,
@@ -191,15 +207,15 @@ export async function callQianwenVision(input: {
   if (!resp.ok) {
     debug.rawContent = text;
     if (resp.status === 401 || resp.status === 403) {
-      return { success: false, errorCode: 'AI_AUTH_FAILED', message: '阿里云鉴权失败（401/403）', debug };
+      return { success: false, errorCode: 'AI_AUTH_FAILED', message: 'AI 鉴权失败（401/403）', debug };
     }
     if (resp.status === 429) {
-      return { success: false, errorCode: 'AI_RATE_LIMITED', message: '阿里云限流（429）', debug };
+      return { success: false, errorCode: 'AI_RATE_LIMITED', message: 'AI 限流（429）', debug };
     }
     return {
       success: false,
       errorCode: 'AI_UNKNOWN_ERROR',
-      message: `阿里云返回 HTTP ${resp.status}`,
+      message: `AI 返回 HTTP ${resp.status}`,
       debug,
     };
   }
@@ -210,7 +226,7 @@ export async function callQianwenVision(input: {
     outerJson = JSON.parse(text);
   } catch {
     debug.rawContent = text;
-    debug.parseError = '阿里云外层响应不是合法 JSON';
+    debug.parseError = 'AI 外层响应不是合法 JSON';
     return { success: false, errorCode: 'AI_INVALID_RESPONSE', message: debug.parseError, debug };
   }
 

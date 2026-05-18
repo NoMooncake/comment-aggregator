@@ -31,3 +31,11 @@ pnpm-debug.log*
 
 # Uploads (local image cache, if any)
 backend/uploads/
+
+# Docker 构建产物（绝不入库，太大）
+*.tar
+*.tar.gz
+
+# Docker 构建产物（绝不入库，太大）
+*.tar
+*.tar.gz
